@@ -94,39 +94,64 @@ def imbalance_features(df):
     prices = ["reference_price", "far_price", "near_price", "ask_price", "bid_price", "wap"]
     sizes = ["matched_size", "bid_size", "ask_size", "imbalance_size"]
 
+    df['session_label'] = 1 if df['seconds_in_bucket'] <=300 else 2
+
     # V1 features
     # Calculate various features using Pandas eval function
     df["volume"] = df.eval("ask_size + bid_size")
     df["mid_price"] = df.eval("ask_price + bid_price")/2
     df["liquidity_imbalance"] = df.eval("(bid_size-ask_size)/(bid_size+ask_size)")
-    df["matched_imbalance"] = df.eval("imbalance_size-matched_size")/df.eval("matched_size+imbalance_size")
+    df["matched_imbalance"] = df.eval("imbalance_size - matched_size")/df.eval("matched_size+imbalance_size")
     df["size_imbalance"] = df.eval("bid_size / ask_size")
-    
+    df["imbalance_intensity"] = df.eval("imbalance_size / volume")
+    df["matched_intensity"] = df.eval("matched_size / volume")
+
     # Create features for pairwise price imbalances
     for c in combinations(prices, 2):
         df[f"{c[0]}_{c[1]}_imb"] = df.eval(f"({c[0]} - {c[1]})/({c[0]} + {c[1]})")
         
-    # V2 features
-    # Calculate additional features
-    df["imbalance_momentum"] = df.groupby(['stock_id'])['imbalance_size'].diff(periods=1) / df['matched_size']
     df["price_spread"] = df["ask_price"] - df["bid_price"]
-    df["spread_intensity"] = df.groupby(['stock_id'])['price_spread'].diff()
-    df['price_pressure'] = df['imbalance_size'] * (df['ask_price'] - df['bid_price'])
     df['market_urgency'] = df['price_spread'] * df['liquidity_imbalance']
     df['depth_pressure'] = (df['ask_size'] - df['bid_size']) * (df['far_price'] - df['near_price'])
+    df['price_pressure'] = df['imbalance_size'] * (df['ask_price'] - df['bid_price'])
+    df['imbalance_with_flag'] = df['imbalance_size'] * df['imbalance_buy_sell_flag']
+    
+    # V2 features
+    # Calculate additional features for each stock on each day
+    group_by_stock_date = df.groupby(['stock_id', 'date_id'])
+    df["imbalance_momentum"] = group_by_stock_date['imbalance_size'].diff(periods=1) / df['matched_size']
+    df["spread_intensity"] = group_by_stock_date['price_spread'].pct_change()
+
+    for col in [
+        'matched_size', 'imbalance_size', 'bid_size', 'ask_size', 
+        'reference_price', 'ask_price', 'bid_price', 
+        'market_urgency', 'imbalance_momentum', 'size_imbalance', 
+        ]:
+        for window in range(1, 7):
+            df[f"{col}_ret_{window}"] = group_by_stock_date[col].pct_change(window)
+    
+
+    for window in range(1, 7):
+        df['imbalance_flag_diff'] = group_by_stock_date['imbalance_buy_sell_flag'].diff(window)
+    
+
+    # V2 features
+    # Calculate additional features
+    # df["imbalance_momentum"] = df.groupby(['stock_id', 'date_id'])['imbalance_size'].diff(periods=1) / df['matched_size']
+    # df["spread_intensity"] = df.groupby(['stock_id', 'date_id'])['price_spread'].diff()
     
     # V3 features
     # Calculate shifted and return features for specific columns
-    for col in ['matched_size', 'imbalance_size', 'reference_price', 'imbalance_buy_sell_flag']:
-        for window in [1, 2, 3, 10]:
-            df[f"{col}_shift_{window}"] = df.groupby('stock_id')[col].shift(window)
-            df[f"{col}_ret_{window}"] = df.groupby('stock_id')[col].pct_change(window)
+    # for col in ['matched_size', 'imbalance_size', 'reference_price', 'imbalance_with_flag']:
+    #     for window in [1, 2, 3, 10]:
+    #         df[f"{col}_shift_{window}"] = df.groupby(['stock_id', 'date_id'])[col].shift(window)
+    #         df[f"{col}_ret_{window}"] = df.groupby(['stock_id', 'date_id'])[col].pct_change(window)
     
-    # Calculate diff features for specific columns
-    for col in ['ask_price', 'bid_price', 'ask_size', 'bid_size',
-                'market_urgency', 'imbalance_momentum', 'size_imbalance']:
-        for window in [1, 2, 3, 10]:
-            df[f"{col}_diff_{window}"] = df.groupby("stock_id")[col].diff(window)
+    # # Calculate diff features for specific columns
+    # for col in ['ask_price', 'bid_price', 'ask_size', 'bid_size',
+    #             'market_urgency', 'imbalance_momentum', 'size_imbalance']:
+    #     for window in [1, 2, 3, 10]:
+    #         df[f"{col}_diff_{window}"] = df.groupby("stock_id")[col].diff(window)
     # Replace infinite values with 0
     return df.replace([np.inf, -np.inf], 0)
 
@@ -160,7 +185,7 @@ def other_features(df, global_stock_id_feats):
 
 
 # Function to generate all features by combining imbalance and other features
-def generate_all_features(df):
+def generate_all_features(df, global_stock_id_feats):
     # Select relevant columns for feature generation
     cols = [c for c in df.columns if c not in ["row_id", "time_id", "target"]]
     df = df[cols]
@@ -169,7 +194,7 @@ def generate_all_features(df):
     df = imbalance_features(df)
     df = numba_imb_features(df)
     # Generate time and stock-related features
-    df = other_features(df)
+    df = other_features(df, global_stock_id_feats)
     gc.collect()
     
     # Select and return the generated features
