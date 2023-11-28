@@ -187,8 +187,8 @@ def other_features(df, global_stock_id_feats):
 # Function to generate all features by combining imbalance and other features
 def generate_all_features(df, global_stock_id_feats):
     # Select relevant columns for feature generation
-    cols = [c for c in df.columns if c not in ["row_id", "time_id", "target"]]
-    df = df[cols]
+    # cols = [c for c in df.columns if c not in ["row_id", "time_id", "target"]]
+    # df = df[cols]
     
     # Generate imbalance features
     df = imbalance_features(df)
@@ -198,6 +198,6 @@ def generate_all_features(df, global_stock_id_feats):
     gc.collect()
     
     # Select and return the generated features
-    feature_name = [i for i in df.columns if i not in ["row_id", "target", "time_id", "date_id"]]
+    feature_name = [i for i in df.columns if i not in ["row_id", "time_id"]]
     
     return df[feature_name]

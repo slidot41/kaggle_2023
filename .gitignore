@@ -1,6 +1,7 @@
 train.csv 
 example_test_files/
 optiver2023/
+*.csv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
