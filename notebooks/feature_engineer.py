@@ -94,7 +94,7 @@ def imbalance_features(df):
     prices = ["reference_price", "far_price", "near_price", "ask_price", "bid_price", "wap"]
     sizes = ["matched_size", "bid_size", "ask_size", "imbalance_size"]
 
-    df['session_label'] = 1 if df['seconds_in_bucket'] <=300 else 2
+    df['session_label'] = df['seconds_in_bucket'] // 300 + 1
 
     # V1 features
     # Calculate various features using Pandas eval function
