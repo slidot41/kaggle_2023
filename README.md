@@ -22,4 +22,5 @@ df_valid = df[df["date_id"] > split_day]
 print(f"train : {df_train.shape}, valid : {df_valid.shape}")
 ```
 
-
+### To do:
+Add feature selection.
