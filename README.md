@@ -24,3 +24,42 @@ print(f"train : {df_train.shape}, valid : {df_valid.shape}")
 
 ### To do:
 Add feature selection.
+
+# Set up env with conda:
+
+```
+conda create -n dsml python=3.10
+conda activate dsml
+# install pytorch
+conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia 
+# install other packages
+conda install -c conda-forge kaggle pandas scikit-learn scipy 
+conda install -c conda-forge lightgbm catboost xgboost gplearn 
+conda install -c conda-forge sympy ta-lib
+conda install -c conda-forge matplotlib seaborn
+conda install -c conda-forge numba
+```
+
+# Download Kaggle dataset
+
+First authenticate using an API token. Go to the 'Account' tab of your Kaggle user profile and select 'Create New Token'. This will trigger the download of kaggle.json, a file containing your API credentials.
+
+If you are using the Kaggle CLI tool, the tool will look for this token at ~/.kaggle/kaggle.json on Linux, OSX, and other UNIX-based operating systems, and at C:\Users\<Windows-username>\.kaggle\kaggle.json on Windows. 
+
+Run the following commands using the kaggle command-line-tool:
+
+```
+# list files related to the comepition:
+kaggle c files optiver-trading-at-the-close 
+
+# download files:
+kaggle competitions download -c optiver-trading-at-the-close 
+unzip optiver-trading-at-the-close.zip 
+rm optiver-trading-at-the-close.zip 
+
+# submit to LB
+kaggle competitions submit -c optiver-trading-at-the-close -f [FILE] -m [MESSAGE]
+
+# check previous submissions
+kaggle competitions submissions -c optiver-trading-at-the-close
+```
