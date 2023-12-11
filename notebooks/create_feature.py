@@ -7,6 +7,7 @@ import seaborn as sns
 import os, sys, warnings
 from time import time 
 
+
 def reduce_mem_usage(df, verbose=0):
     """
     Iterate through all numeric columns of a dataframe and modify the data type
@@ -175,6 +176,19 @@ def gen_v3_features(df, prices, sizes, v1_features):
     df = pd.concat([df, df_v3], axis=1)
     
     return df, v3_features
+
+
+def gen_feature_cols(feature_dicts):
+    
+    feature_cols = []
+    category_cols = []
+    
+    for k, v in feature_dicts.items():
+        feature_cols += v
+        if k in ['category', 'v1_feature_category']:
+            category_cols += v
+            
+    return feature_cols, category_cols
 
 
 def gen_features(df_train, feature_dicts):
