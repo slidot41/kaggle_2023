@@ -1,7 +1,7 @@
 train.csv 
+submission.csv
 example_test_files/
 optiver2023/
-*.csv
 data
 
 # Byte-compiled / optimized / DLL files
