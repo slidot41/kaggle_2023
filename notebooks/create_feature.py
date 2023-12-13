@@ -5,7 +5,7 @@ import numpy as np
 from itertools import combinations
 # import seaborn as sns
 # import os, sys, warnings
-# from time import time 
+from time import time 
 
 
 def reduce_mem_usage(df, verbose=0):
@@ -222,27 +222,34 @@ def gen_daily_stats_features(df, on_cols=['target', 'wap', 'volume'], stats=['me
         ).to_series()
     
     df = pd.concat([df, daily_stats], axis=1)
+    
     daily_features = daily_stats.columns.tolist()
+    
+    df.fillna(0, inplace=True)
+    df.replace([np.inf, -np.inf], 0, inplace=True)
+    df = reduce_mem_usage(df, verbose=0)
     
     return df, daily_features
 
 
 if __name__ == "__main__":
     
+    now = time()
+    
     prices =  ["reference_price", "far_price", "near_price", "ask_price", "bid_price", "wap"]
     sizes = ["matched_size", "bid_size", "ask_size", "imbalance_size"]
-    category = ["stock_id", "seconds_in_bucket", 'imbalance_buy_sell_flag']
+    category = ["stock_id", "seconds_in_bucket", 'imbalance_buy_sell_flag', 'stock_label']
 
     csv_train = "./data/train.csv"
-    df = pd.read_csv(csv_train, nrows=100000)
+    df = pd.read_csv(csv_train, nrows=None)
     df = df[~df['target'].isnull()] 
     df.fillna(0, inplace=True)
+    
+    df = df[df['date_id'] >= 430]
 
     print(df.shape)
     print(f"Trading days: {df['date_id'].nunique()}")
     print(f"Stocks: {df['stock_id'].nunique()}")
-    
-    df = df[(df['date_id']>5) & (df['date_id']<30)]
     
     stock_labels = pd.read_csv("/home/lishi/projects/Competition/kaggle_2023/stock_labels.csv")
     stock_labels.columns = ['stock_id', 'stock_label']
@@ -256,3 +263,7 @@ if __name__ == "__main__":
     print(df_daily.shape)
     print(df_daily.columns.tolist())
     
+    df_daily.to_csv(
+        "/home/lishi/projects/Competition/kaggle_2023/data/train_full_features_day_430.csv", index=False)
+    
+    print(f"Time elapsed: {(time()-now)/60:.2f} min.")
