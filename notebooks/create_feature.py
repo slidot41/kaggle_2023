@@ -50,10 +50,42 @@ def reduce_mem_usage(df, verbose=0):
 
     return df
 
+defualt_drop_cols = [
+        'min_matched_imbalance', 
+        'min_imbalance_size', 
+        'min_imbalance_intensity', 
+        'min_price_pressure'
+        ]
 
-def gen_v1_features(df, prices):
-    # V1 features: directly apply formula to a single row
+default_pct_features = [
+    'imbalance_with_flag', 
+    'wap', 
+    'matched_imbalance']
+
+default_roll_features = [
+    'ask_size',
+    'bid_size',
+    'imbalance_with_flag',
+    'liquidity_imbalance',
+    'matched_imbalance',
+    'reference_price_ask_price_imbalance',
+    'reference_price_bid_price_imbalance',
+    'reference_price_wap_imbalance',
+    'far_price_near_price_imbalance',
+    ]
+
+
+def gen_v1v2_features(
+    df, prices, sizes, 
+    stock_labels=None,
+    v2_stats=['mean', 'median', 'std', 'min', 'max'],
+    drop_cols=defualt_drop_cols
+    ):
     
+    if stock_labels is not None:
+        df = pd.merge(df, stock_labels, on='stock_id', how='left')
+    
+    ## V1 features: row-wise features
     v1_features = {
         "volume": "ask_size + bid_size",
         "mid_price": "(ask_price + bid_price)/2",
@@ -71,217 +103,156 @@ def gen_v1_features(df, prices):
     }
 
     # include pair-wise price imbalances
-    for c in combinations(prices, 2):
-        if ('far_price' in c) or ('near_price' in c):
-            pass 
-        else:
-            v1_features[f"{c[0]}_{c[1]}_imbalance"] = f"({c[0]} - {c[1]}) / ({c[0]} + {c[1]})"
+    for c in combinations(["reference_price", "ask_price", "bid_price", "wap"], 2):
+        v1_features[f"{c[0]}_{c[1]}_imbalance"] = f"({c[0]} - {c[1]}) / ({c[0]} + {c[1]})"
     
     for k, v in v1_features.items():
         df[k] = df.eval(v)
-        
-    # v1_feature_category = {
-    #     # 'minute': 'seconds_in_bucket // 60',
-    #     'imb_buy_side': "(imbalance_buy_sell_flag == 1)",
-    #     'imb_sell_side': "(imbalance_buy_sell_flag == -1)",
-    #     # 'first_half_session': '(seconds_in_bucket <= 240)',
-    #     # 'second_half_session': '(seconds_in_bucket > 240)'
-    # }
     
-    # for k, v in v1_feature_category.items():
-    #     df[k] = df.eval(v).astype(np.int8)
-        
-    df = reduce_mem_usage(df, verbose=0)
-        
-    return df, list(v1_features.keys())#, list(v1_feature_category.keys())
-        
-def gen_v2_features(df, v2_feat_cols):
+    v1_features = list(v1_features.keys())
     
+    # -----------------------------------
     # V2 features: cross-section features
-    # V2 features are generated on the groupby(['date_id', 'seconds_in_bucket'])
-    # These features includes:
-    # 1. statistics of V1 features (non-categorical)
-    # 2. rank of V1 features for each stocks (non-categorical)
+    # -----------------------------------
     
-    group = df.groupby(['date_id', 'seconds_in_bucket'])
+    if df['date_id'].nunique() > 1:
+        group_key = ['date_id', 'seconds_in_bucket']
+    else:
+        group_key = ['seconds_in_bucket']
+        
+    group_by_seconds = df.groupby(group_key)
+    v2_feat_cols = prices + sizes + v1_features
+    
+    # cross-section statistics of row-wise features
+    df_stats = group_by_seconds[v2_feat_cols].agg(v2_stats)
+    df_stats.columns = df_stats.columns.map(lambda x: '_'.join([x[1], x[0]])).to_series()
+    df = pd.merge(df, df_stats, left_on=group_key, right_index=True, how='left')
+    
+    # cross-section ranks of row-wise features
+    df_rank = group_by_seconds[v2_feat_cols].rank(pct=True).add_prefix('rank_')
+    df = pd.concat([df, df_rank], axis=1)
 
-    v2_features_stats = ['mean', 'median', 'std', 'min', 'max']
-
-    # calculate statistics of V1 features for each stock
-    df_v2 = group[v2_feat_cols].agg(v2_features_stats).reset_index()
-    df_v2.columns = ['date_id', 'seconds_in_bucket'] + [f"{c[1]}_{c[0]}" for c in df_v2.columns[2:]]
-    df = df.merge(df_v2, on=['date_id', 'seconds_in_bucket'], how='left')
-    
-    # calculate rank of V1 features for each stock
-    df_v2 = group[v2_feat_cols].rank(pct=True).add_prefix('rank_')
-    df = df.merge(df_v2, left_index=True, right_index=True, how='left')
-    
-    df = reduce_mem_usage(df, verbose=0)
-    
-    drop_cols = [
-        'min_matched_imbalance', 'min_imbalance_size', 
-        'min_imbalance_intensity', 'min_price_pressure'
-        ]
-    
     df = df.drop(columns=drop_cols)
-    
-    v2_features = \
-        [f"{s}_{c}" for c in v2_feat_cols for s in v2_features_stats] + \
-        [f"rank_{c}" for c in v2_feat_cols]
-        
+    v2_features = df_stats.columns.tolist() + df_rank.columns.tolist()
     v2_features = [f for f in v2_features if f not in drop_cols]
+    
+    df.fillna(0, inplace=True)
+    df.replace([np.inf, -np.inf], 0, inplace=True)
+    df = reduce_mem_usage(df, verbose=0)
         
-    return df, v2_features
+    return df, v1_features, v2_features
 
 
-# !!! Requrires at least 11 timesteps to calculate all rolling statistics
-def gen_v3_features(df, prices, sizes, v1_features):
-    # V3 features: rolling statistics of V1 features (non-categorical)
-    # V3 features are generated on the groupby(['date_id', 'stock_id'])
-    # here we introduce ta-lib functions to calculate TA indicators
-
-    # V3.1 relative change of V1 features by shift(1)
-    # for prices, we calculate the change in basis points (*1e4)
-    # for other features, we calculate the change in percentage (*1e2)
-    group_by_stock = df.groupby(['date_id', 'stock_id'])
+def gen_v3_features(
+    df, 
+    pct_features=default_pct_features,
+    roll_window=5,
+    roll_features=default_roll_features, 
+    roll_stats=['mean', 'std', 'max', 'min'],
+    add_ta=False
+    ):
     
-    pct_features = ['imbalance_with_flag', 'wap', 'matched_imbalance']
-    
-    relative_change = group_by_stock[pct_features].pct_change(1, fill_method=None).add_prefix('pct_')
-
-    relative_change[ 'pct_wap' ] *= 1e4
-    relative_change[ ['pct_imbalance_with_flag', 'pct_matched_imbalance'] ] *= 1e2
-    
-    # skip_v1_feat = [
-    #     'ask_price_wap_imbalance', 'liquidity_imbalance',
-    #     'size_imbalance', 'market_urgency',
-    #     'imbalance_intensity', 'price_spread',
-    #     'ask_price_bid_price_imbalance', 'volume',
-    #     'matched_intensity', 'depth_pressure',
-    #     'far_price_near_price_imbalance']
-    
-    # others_feats = [f for f in sizes+v1_features if f not in skip_v1_feat]
-    
-    df = pd.concat([df, relative_change], axis=1)
-    v3_features = relative_change.columns.tolist()
-    
-    # V3.2 Simple TA indicators
-    # Those are simple TA indicators that use only one feature
-    
-    # skip_rolling = ['size_imbalance', 'ask_price_bid_price_imbalance']
-    # rolling_features = [f for f in prices + sizes + v1_features if f not in skip_rolling]
-    rolling_features = [
-        'ask_size',
-        'bid_size',
-        'imbalance_with_flag',
-        'liquidity_imbalance',
-        'matched_imbalance',
-        'reference_price_ask_price_imbalance',
-        'reference_price_bid_price_imbalance',
-        'reference_price_wap_imbalance',
-        'far_price_near_price_imbalance',
-        ]
-    
-    df_v3 = group_by_stock[rolling_features].rolling(5).agg(['mean', 'std', 'max', 'min']).reset_index()
-    stats_cols = [f"{c[1]}_{c[0]}_5" for c in df_v3.columns[2:]]
-    df_v3.columns = ['date_id', 'stock_id'] + stats_cols
-    df_v3.set_index('_level_2_5', inplace=True)
-    df_v3.drop(columns=['date_id', 'stock_id'], inplace=True)
-    
-    df = df.merge(df_v3, left_index=True, right_index=True, how='left')
-    v3_features += df_v3.columns.tolist()
+    # V3 features: rolling on timeseries features 
+    if df['date_id'].nunique() > 1:
+        group_key = ['date_id', 'stock_id']
+    else:
+        group_key = ['stock_id']
         
-    # # # V3.3 TA indicators that use multiple features
-    # def composite_ta(df):
-
-    #     ad_osc = ta.ADOSC(df['ask_price'], df['bid_price'], df['wap'], df['volume'], fastperiod=3, slowperiod=5)
-    #     macd, macdsignal, macdhist = ta.MACD(df['wap'], fastperiod=5, slowperiod=11, signalperiod=3)
-        
-    #     return pd.DataFrame({
-    #         'ema': ta.EMA(df['wap'], timeperiod=5),
-    #         'rsi': ta.RSI(df['wap'], timeperiod=5),
-    #         'cci': ta.CCI(df['ask_price'], df['bid_price'], df['wap'], timeperiod=5),
-    #         'mfi': ta.MFI(df['ask_price'], df['bid_price'], df['wap'], df['volume'], timeperiod=5),
-    #         'ad_osc': ad_osc,
-    #         'macd': macd,
-    #         'macdsignal': macdsignal,
-    #         'macdhist': macdhist
-    #     })
+    group_by_stock = df.groupby(group_key)
     
-    # df_v3 = group_by_stock.apply(composite_ta) 
-    # v3_features += df_v3.columns.tolist()
+    df_change = group_by_stock[pct_features].pct_change(1, fill_method=None).add_prefix('pct_')
     
-    # df_v3.reset_index(inplace=True)
-    # df_v3.set_index('level_2', inplace=True)
-    # df_v3.drop(columns=['date_id', 'stock_id'], inplace=True)
+    df_rolling = group_by_stock[roll_features].rolling(roll_window).agg(roll_stats).droplevel(group_key)
+    df_rolling.columns = df_rolling.columns.map(
+        lambda x: '_'.join([x[1], x[0], str(roll_window)])
+        ).to_series()
     
-    # df = pd.concat([df, df_v3], axis=1)
+    concat_list = [df, df_change, df_rolling]
+    v3_features = df_change.columns.tolist() + df_rolling.columns.tolist()
+    
+    if add_ta:
+        df_ta = calc_TA_indicators(group_by_stock)
+        df_ta = df_ta.droplevel(group_key)
+        concat_list.append(df_ta)
+        v3_features += df_ta.columns.tolist() 
+    
+    df = pd.concat(concat_list, axis=1)
+    df.fillna(0, inplace=True)
+    df.replace([np.inf, -np.inf], 0, inplace=True)
+    df = reduce_mem_usage(df, verbose=0)
     
     return df, v3_features
 
 
-def gen_feature_cols(feature_dicts):
+def calc_TA_indicators(grouped_df):
     
-    feature_cols = []
-    category_cols = []
+    import talib as ta
     
-    for k, v in feature_dicts.items():
-        feature_cols += v
-        if k in ['category', 'v1_feature_category']:
-            category_cols += v
-            
-    return feature_cols, category_cols
+    def composite_ta(df):
+
+        ad_osc = ta.ADOSC(df['ask_price'], df['bid_price'], df['wap'], df['volume'], fastperiod=3, slowperiod=5)
+        macd, macdsignal, macdhist = ta.MACD(df['wap'], fastperiod=5, slowperiod=11, signalperiod=3)
+        
+        return pd.DataFrame({
+            'ema': ta.EMA(df['wap'], timeperiod=5),
+            'rsi': ta.RSI(df['wap'], timeperiod=5),
+            'cci': ta.CCI(df['ask_price'], df['bid_price'], df['wap'], timeperiod=5),
+            'mfi': ta.MFI(df['ask_price'], df['bid_price'], df['wap'], df['volume'], timeperiod=5),
+            'ad_osc': ad_osc,
+            'macd': macd,
+            'macdsignal': macdsignal,
+            'macdhist': macdhist
+        })
+        
+    df_ta = grouped_df.apply(composite_ta)
+    
+    return df_ta
 
 
-def gen_features(df_train, feature_dicts):
+def gen_daily_stats_features(df, on_cols=['target', 'wap', 'volume'], stats=['mean', 'std'], n_days=5):
     
-    df_train.fillna(0, inplace=True)
-    df_train = reduce_mem_usage(df_train, verbose=0)
-
-    df_v1, v1_feat, v1_feat_cat = gen_v1_features(df_train, feature_dicts['prices'])
-    feature_dicts['v1_features'] = v1_feat
-    feature_dicts['v1_feature_category'] = v1_feat_cat
+    if df['seconds_in_bucket'].nunique() > 1:
+        group_key = ['stock_id', 'seconds_in_bucket']
+    else:
+        group_key = ['stock_id']
+        
+    daily_stats = df.groupby(group_key)[on_cols].rolling(n_days).agg(stats).droplevel(group_key)
+    daily_stats.columns = daily_stats.columns.map(
+        lambda x: '_'.join([x[1], x[0], 'daily', str(n_days)])
+        ).to_series()
     
-    v2_feat_cols = feature_dicts['prices'] + feature_dicts['sizes'] + feature_dicts['v1_features']
-    df_v2, v2_features = gen_v2_features(df_v1, v2_feat_cols)
-    feature_dicts['v2_features'] = v2_features
+    df = pd.concat([df, daily_stats], axis=1)
+    daily_features = daily_stats.columns.tolist()
     
-    df_v3, v3_features = gen_v3_features(
-        df_v2, 
-        feature_dicts['prices'],
-        feature_dicts['sizes'],
-        feature_dicts['v1_features']
-        )
-    
-    feature_dicts['v3_features'] = v3_features
-    
-    df_v3.fillna(0, inplace=True)
-    df_v3.replace([np.inf, -np.inf], 0, inplace=True)
-    df_v3 = reduce_mem_usage(df_v3, verbose=0)
-    
-    return df_v3, feature_dicts
+    return df, daily_features
 
 
 if __name__ == "__main__":
     
-    feature_dicts = {
-        'prices': ["reference_price", "far_price", "near_price", "ask_price", "bid_price", "wap"],
-        'sizes':  ["matched_size", "bid_size", "ask_size", "imbalance_size"],
-        "category": ["stock_id", "seconds_in_bucket", 'imbalance_buy_sell_flag']
-    }
+    prices =  ["reference_price", "far_price", "near_price", "ask_price", "bid_price", "wap"]
+    sizes = ["matched_size", "bid_size", "ask_size", "imbalance_size"]
+    category = ["stock_id", "seconds_in_bucket", 'imbalance_buy_sell_flag']
 
     csv_train = "./data/train.csv"
-    df = pd.read_csv(csv_train)
+    df = pd.read_csv(csv_train, nrows=100000)
     df = df[~df['target'].isnull()] 
+    df.fillna(0, inplace=True)
 
     print(df.shape)
     print(f"Trading days: {df['date_id'].nunique()}")
     print(f"Stocks: {df['stock_id'].nunique()}")
     
-    # test with only 30 days of data
-    sub_df = df[df['date_id'] <= 30].copy()
-    df_final, feature_dicts = gen_features(sub_df, feature_dicts)
+    df = df[(df['date_id']>5) & (df['date_id']<30)]
     
-    print(df_final.shape)
-    print(df_final.columns[:20])
+    stock_labels = pd.read_csv("/home/lishi/projects/Competition/kaggle_2023/stock_labels.csv")
+    stock_labels.columns = ['stock_id', 'stock_label']
+    
+    df_v1v2, v1_features, v2_features = gen_v1v2_features(df, prices, sizes, stock_labels=stock_labels)
+    
+    df_v3, v3_features = gen_v3_features(df_v1v2, add_ta=True)
+    
+    df_daily, daily_features = gen_daily_stats_features(df_v3)
+    
+    print(df_daily.shape)
+    print(df_daily.columns.tolist())
     
