@@ -12,53 +12,12 @@ import os, sys, warnings
 from time import time 
 from glob import glob
 
-sys.path.append("/home/lishi/projects/Competition/kaggle_2023/notebooks")
+# sys.path.append("/home/lishi/projects/Competition/kaggle_2023/notebooks")
 
-from create_feature import (
-    reduce_mem_usage, gen_v1_features, gen_v2_features, gen_v3_features, gen_feature_cols )
+# from create_feature import (
+#     reduce_mem_usage, gen_v1v2_features, gen_v3_features, gen_daily_stats_features )
 
 warnings.filterwarnings('ignore')
-
-
-def prepare_data(csv_file, feature_dicts, feature_versions=['v1', 'v2', 'v3'], nrows=None, save_csv=None):
-    
-    df = pd.read_csv(csv_file, nrows=nrows)
-    df = df[~df['target'].isnull()] 
-    
-    df.reset_index(drop=True, inplace=True)
-    
-    df.fillna(0, inplace=True)
-    df = reduce_mem_usage(df, verbose=0)
-    
-    print(df.shape)
-    print(f"Trading days: {df['date_id'].nunique()}")
-    print(f"Stocks: {df['stock_id'].nunique()}")
-    
-    if 'v1' in feature_versions:
-        df, v1_feat = gen_v1_features(df, feature_dicts['prices'])
-        feature_dicts['v1_features'] = v1_feat
-        # feature_dicts['v1_feature_category'] = v1_feat_cat
-    
-    if 'v2' in feature_versions:
-        v2_feat_cols = feature_dicts['prices'] + feature_dicts['sizes'] + feature_dicts['v1_features']
-        df, v2_features = gen_v2_features(df, v2_feat_cols)
-        feature_dicts['v2_features'] = v2_features
-        
-    if 'v3' in feature_versions:
-        df, v3_features = gen_v3_features(
-            df, 
-            feature_dicts['prices'],
-            feature_dicts['sizes'],
-            feature_dicts['v1_features']
-            )
-        
-        feature_dicts['v3_features'] = v3_features
-    
-    df.fillna(0, inplace=True)
-    df.replace([np.inf, -np.inf], 0, inplace=True)
-    df = reduce_mem_usage(df, verbose=0)
-    
-    return df, feature_dicts
 
 
 def train_and_cv(df, feature_cols, category_cols, lgb_params, model_name, save_dir, scaler_file=None, n_splits=5):
@@ -174,55 +133,67 @@ def calc_feature_importance(models, feature_cols):
 
 if __name__ == "__main__":
     
-    train_csv = "/home/lishi/projects/Competition/kaggle_2023/data/train.csv"
+    train_csv = "/home/lishi/projects/Competition/kaggle_2023/data/train_full_features.parquet"
+    
+    df = pd.read_parquet(train_csv)
+    df = df.drop(columns=['row_id', 'time_id'])
+    df['imbalance_buy_sell_flag'] = df['imbalance_buy_sell_flag'].replace({-1: 0, 1: 1})
+    
+    print(df.shape)
+    print(f"Trading days: {df['date_id'].nunique()}")
+    print(f"Stocks: {df['stock_id'].nunique()}")
+        
+    prices =  ["reference_price", "far_price", "near_price", "ask_price", "bid_price", "wap"]
+    sizes = ["matched_size", "bid_size", "ask_size", "imbalance_size"]
+    category = ["stock_id", "seconds_in_bucket", 'imbalance_buy_sell_flag', 'stock_label']
+    
+    ta_indicators = ['ema', 'rsi', 'cci', 'mfi', 'ad_osc', 'macd', 'macdhist', 'macdsignal']
+    
+    feature_cols = [x for x in df.columns if x not in ['target', 'date_id']+ta_indicators]
+    
+    # feature_cols = [x for x in feature_cols if 'daily' not in x]
 
-    feature_dicts = {
-        'prices': ["reference_price", "far_price", "near_price", "ask_price", "bid_price", "wap"],
-        'sizes':  ["matched_size", "bid_size", "ask_size", "imbalance_size"],
-        "category": ["stock_id", "seconds_in_bucket", 'imbalance_buy_sell_flag']
-        }
+    # feature_dicts = {
+    #     'prices': ["reference_price", "far_price", "near_price", "ask_price", "bid_price", "wap"],
+    #     'sizes':  ["matched_size", "bid_size", "ask_size", "imbalance_size"],
+    #     "category": ["stock_id", "seconds_in_bucket", 'imbalance_buy_sell_flag']
+    #     }
     
-    # ta_indicators = ['ema', 'rsi', 'cci', 'mfi', 'ad_osc', 'macd', 'macdhist', 'macdsignal']
+    # 
     
-    reduce_feature = False
-    percentile_thred = 20
-    csv_importance = "/home/lishi/projects/Competition/kaggle_2023/data/lgb_models/lgb_v1v2v3/lgb_v1v2v3_feature_importance.csv"
+    # reduce_feature = False
+    # percentile_thred = 20
+    # csv_importance = "/home/lishi/projects/Competition/kaggle_2023/data/lgb_models/lgb_v1v2v3/lgb_v1v2v3_feature_importance.csv"
     
-    feat_version = ['v1', 'v2', 'v3']#, 'v3']
-    model_name = "lgb_v1v2v3_no_ta_reduce"
+    # feat_version = ['v1', 'v2', 'v3']#, 'v3']
+    # model_name = "lgb_v1v2v3_no_ta_reduce"
     
-    print(f"Feature version: {feat_version}")
-    print("Preparing Data...")
+    # print(f"Feature version: {feat_version}")
+    # print("Preparing Data...")
     
-    df, feature_dicts = prepare_data(train_csv, feature_dicts, feat_version, nrows=None, save_csv=None)
+    # df, feature_dicts = prepare_data(train_csv, feature_dicts, feat_version, nrows=None, save_csv=None)
 
-    feature_cols, category_cols = gen_feature_cols(feature_dicts)
+    # feature_cols, category_cols = gen_feature_cols(feature_dicts)
     
     # feature_cols = [x for x in feature_cols if x not in ta_indicators]
 
     print("Number of features:", len(feature_cols))
-    print("Number of category features:", len(category_cols))
+    print("Number of category features:", len(category))
 
-    model_name += f"_{len(feature_cols)+len(category_cols)}"
+    model_name = f"lgb_no_ta_add_daily_{len(feature_cols)}"
     
-    if reduce_feature:
-        feat_importance = pd.read_csv(csv_importance)
-        imp_thred = np.percentile(feat_importance['Value'].values, percentile_thred)
-        print(f"Importance threshold: {imp_thred}")
-        less_imp_cols = feat_importance[feat_importance['Value']<imp_thred]['Feature'].values
-        print(f"Number of less important features: {len(less_imp_cols)}")
-        feature_cols = [x for x in feature_cols if x not in less_imp_cols]
-        print(f"Feature reduced from {len(feat_importance)} to {len(feature_cols)}")
-        category_cols = [x for x in category_cols if x in feature_cols]
-        print(f"Category reduced from {len(feat_importance)} to {len(category_cols)}")
+    # if reduce_feature:
+    #     feat_importance = pd.read_csv(csv_importance)
+    #     imp_thred = np.percentile(feat_importance['Value'].values, percentile_thred)
+    #     print(f"Importance threshold: {imp_thred}")
+    #     less_imp_cols = feat_importance[feat_importance['Value']<imp_thred]['Feature'].values
+    #     print(f"Number of less important features: {len(less_imp_cols)}")
+    #     feature_cols = [x for x in feature_cols if x not in less_imp_cols]
+    #     print(f"Feature reduced from {len(feat_importance)} to {len(feature_cols)}")
+    #     category_cols = [x for x in category_cols if x in feature_cols]
+    #     print(f"Category reduced from {len(feat_importance)} to {len(category_cols)}")
         
-        model_name = f"{model_name}_reduce_{percentile_thred}"
-    
-    save_dir = f"/home/lishi/projects/Competition/kaggle_2023/data/lgb_models/{model_name}"
-    scaler_file = f"{save_dir}/{model_name}_scaler.pkl"
-    
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+    #     model_name = f"{model_name}_reduce_{percentile_thred}"
     
     lgb_params = {
         'boosting_type': 'gbdt',
@@ -235,15 +206,35 @@ if __name__ == "__main__":
         'reg_alpha': 0.01,
         'reg_lambda': 0.01,
         'early_stopping_rounds': 50,
-        'num_threads': 24,
+        'num_threads': 16,
         'importance_type': 'gain',
         'verbose': -1,
         }
-        
+    
+    stock_label = 0
+    sub_df = df[df['stock_label']==stock_label].copy()
+    sub_df.reset_index(drop=True, inplace=True)
+    print(sub_df.head())
+    
+    print(f"Dataset shape for stock_labe {stock_label}:", sub_df.shape)
+    print(sub_df.shape)
+    print(f"Trading days: {sub_df['date_id'].nunique()}")
+    print(f"Stocks: {sub_df['stock_id'].nunique()}")
+    
+    model_name += f"_label_{stock_label}"
+    save_dir = f"/home/lishi/projects/Competition/kaggle_2023/data/lgb_models/{model_name}"
+    scaler_file = f"{save_dir}/{model_name}_scaler.pkl"
+    
+    print(f"Model name: {model_name}")
+    print(f"Save dir: {save_dir}")
+    
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    
     cv_results = train_and_cv(
-        df,
+        sub_df,
         feature_cols, 
-        category_cols, 
+        category, 
         lgb_params, 
         model_name=model_name, 
         save_dir=save_dir, 

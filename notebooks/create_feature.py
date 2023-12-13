@@ -59,19 +59,34 @@ defualt_drop_cols = [
 
 default_pct_features = [
     'imbalance_with_flag', 
+    'matched_imbalance',
+    'imbalance_size',
     'wap', 
-    'matched_imbalance']
+    'bid_price',
+    'ask_price'
+    ]
 
 default_roll_features = [
+    'ask_price',
+    'ask_price_wap_imbalance',
     'ask_size',
+    'bid_price',
+    'bid_price_wap_imbalance',
     'bid_size',
+    'far_price_near_price_imbalance',
+    'imbalance_intensity',
     'imbalance_with_flag',
     'liquidity_imbalance',
+    'market_urgency',
     'matched_imbalance',
+    'matched_intensity',
+    'matched_size',
+    'price_pressure',
     'reference_price_ask_price_imbalance',
     'reference_price_bid_price_imbalance',
     'reference_price_wap_imbalance',
-    'far_price_near_price_imbalance',
+    'volume',
+    'wap'
     ]
 
 
@@ -245,7 +260,7 @@ if __name__ == "__main__":
     df = df[~df['target'].isnull()] 
     df.fillna(0, inplace=True)
     
-    df = df[df['date_id'] >= 430]
+    # df = df[df['date_id'] >= 430]
 
     print(df.shape)
     print(f"Trading days: {df['date_id'].nunique()}")
@@ -261,9 +276,17 @@ if __name__ == "__main__":
     df_daily, daily_features = gen_daily_stats_features(df_v3)
     
     print(df_daily.shape)
-    print(df_daily.columns.tolist())
     
-    df_daily.to_csv(
-        "/home/lishi/projects/Competition/kaggle_2023/data/train_full_features_day_430.csv", index=False)
+    print(f"V1 features: {len(v1_features)}")
+    print(f"V2 features: {len(v2_features)}")
+    print(f"V3 features: {len(v3_features)}")
+    print(f"Daily features: {len(daily_features)}")
+    
+    print(f"Time elapsed: {(time()-now)/60:.2f} min.")
+    print("Saving to csv...")
+    
+    df_daily.to_parquet(
+        "/home/lishi/projects/Competition/kaggle_2023/data/train_full_features.parquet", 
+        index=False)
     
     print(f"Time elapsed: {(time()-now)/60:.2f} min.")
