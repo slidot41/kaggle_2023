@@ -61,6 +61,7 @@ default_pct_features = [
     'imbalance_with_flag', 
     'matched_imbalance',
     'imbalance_size',
+    'volume',
     'wap', 
     'bid_price',
     'ask_price'
