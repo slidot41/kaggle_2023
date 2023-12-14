@@ -151,7 +151,9 @@ if __name__ == "__main__":
     
     feature_cols = [x for x in df.columns if x not in ['target', 'date_id']+ta_indicators]
     
-    # feature_cols = [x for x in feature_cols if 'daily' not in x]
+    feature_cols = [x for x in feature_cols if 'target' not in x]
+
+    print(feature_cols)
 
     # feature_dicts = {
     #     'prices': ["reference_price", "far_price", "near_price", "ask_price", "bid_price", "wap"],
@@ -180,7 +182,7 @@ if __name__ == "__main__":
     print("Number of features:", len(feature_cols))
     print("Number of category features:", len(category))
 
-    model_name = f"lgb_no_ta_add_daily_{len(feature_cols)}"
+    model_name = f"lgb_no_ta_add_daily_no_target_{len(feature_cols)}"
     
     # if reduce_feature:
     #     feat_importance = pd.read_csv(csv_importance)
@@ -211,8 +213,8 @@ if __name__ == "__main__":
         'verbose': -1,
         }
     
-    stock_label = 0
-    sub_df = df[df['stock_label']==stock_label].copy()
+    stock_label = [1, 2]
+    sub_df = df[df['stock_label'].isin(stock_label)].copy()
     sub_df.reset_index(drop=True, inplace=True)
     print(sub_df.head())
     
@@ -221,7 +223,7 @@ if __name__ == "__main__":
     print(f"Trading days: {sub_df['date_id'].nunique()}")
     print(f"Stocks: {sub_df['stock_id'].nunique()}")
     
-    model_name += f"_label_{stock_label}"
+    model_name += f'_label_{"-".join([str(x) for x in stock_label])}'
     save_dir = f"/home/lishi/projects/Competition/kaggle_2023/data/lgb_models/{model_name}"
     scaler_file = f"{save_dir}/{model_name}_scaler.pkl"
     

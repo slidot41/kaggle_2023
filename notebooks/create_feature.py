@@ -61,6 +61,7 @@ default_pct_features = [
     'imbalance_with_flag', 
     'matched_imbalance',
     'imbalance_size',
+    'volume',
     'wap', 
     'bid_price',
     'ask_price'
@@ -163,7 +164,6 @@ def gen_v3_features(
     pct_features=default_pct_features,
     roll_window=5,
     roll_features=default_roll_features, 
-    roll_stats=['mean', 'std', 'max', 'min'],
     add_ta=False
     ):
     
@@ -175,23 +175,48 @@ def gen_v3_features(
         
     group_by_stock = df.groupby(group_key)
     
-    df_change = group_by_stock[pct_features].pct_change(1, fill_method=None).add_prefix('pct_')
+    feat_set = list(set(pct_features + roll_features))
     
-    df_rolling = group_by_stock[roll_features].rolling(roll_window).agg(roll_stats).droplevel(group_key)
-    df_rolling.columns = df_rolling.columns.map(
-        lambda x: '_'.join([x[1], x[0], str(roll_window)])
-        ).to_series()
+    df_shift = [ group_by_stock[feat_set].shift(i).add_prefix(f"prev_{i}_") for i in range(1, roll_window+1) ]
     
-    concat_list = [df, df_change, df_rolling]
-    v3_features = df_change.columns.tolist() + df_rolling.columns.tolist()
+    df = pd.concat([df] + df_shift, axis=1)
+    
+    v3_features = []
+    for col in pct_features:
+        for i in range(1, roll_window+1):
+            df[f"pct_{i}_{col}"] = df[col] / df[f"prev_{i}_{col}"] - 1
+            v3_features.append(f"pct_{i}_{col}")
+
+    stats_list = []
+    for col in roll_features:
+        prev_cols = [f'prev_{i}_{col}' for i in range(1, roll_window+1)]
+        stats_cols = [f'mean_{col}_{roll_window}', f'std_{col}_{roll_window}', f'max_{col}_{roll_window}', f'min_{col}_{roll_window}']
+        
+        df_stats = pd.concat([df[prev_cols].mean(axis=1), df[prev_cols].std(axis=1), df[prev_cols].max(axis=1), df[prev_cols].min(axis=1)], axis=1)
+        df_stats.columns = stats_cols
+        v3_features += stats_cols
+        stats_list.append(df_stats)
+        
+        df = df.drop(columns=prev_cols)
+    
+    df = pd.concat([df] + stats_list, axis=1)
+    
+    # df_change = group_by_stock[pct_features].pct_change(1, fill_method=None).add_prefix('pct_')
+    
+    # df_rolling = group_by_stock[roll_features].rolling(roll_window).agg(roll_stats).droplevel(group_key)
+    # df_rolling.columns = df_rolling.columns.map(
+    #     lambda x: '_'.join([x[1], x[0], str(roll_window)])
+    #     ).to_series()
+    
+    # concat_list = [df, df_change, df_rolling]
+    # v3_features = df_change.columns.tolist() + df_rolling.columns.tolist()
     
     if add_ta:
         df_ta = calc_TA_indicators(group_by_stock)
         df_ta = df_ta.droplevel(group_key)
-        concat_list.append(df_ta)
+        df = pd.concat([df, df_ta], axis=1)
         v3_features += df_ta.columns.tolist() 
     
-    df = pd.concat(concat_list, axis=1)
     df.fillna(0, inplace=True)
     df.replace([np.inf, -np.inf], 0, inplace=True)
     df = reduce_mem_usage(df, verbose=0)
@@ -224,21 +249,42 @@ def calc_TA_indicators(grouped_df):
     return df_ta
 
 
-def gen_daily_stats_features(df, on_cols=['target', 'wap', 'volume'], stats=['mean', 'std'], n_days=5):
+def gen_daily_stats_features(df, on_cols=['target', 'wap', 'volume'], n_days=5):
     
     if df['seconds_in_bucket'].nunique() > 1:
         group_key = ['stock_id', 'seconds_in_bucket']
     else:
         group_key = ['stock_id']
         
-    daily_stats = df.groupby(group_key)[on_cols].rolling(n_days).agg(stats).droplevel(group_key)
-    daily_stats.columns = daily_stats.columns.map(
-        lambda x: '_'.join([x[1], x[0], 'daily', str(n_days)])
-        ).to_series()
+    daily_shifts = [ df.groupby(group_key)[on_cols].shift(i).add_prefix(f'prev_{i}d_') for i in range(1, n_days+1) ]
+    df = pd.concat([df] + daily_shifts, axis=1)
     
-    df = pd.concat([df, daily_stats], axis=1)
+    daily_features = []
+    stats_list = []
     
-    daily_features = daily_stats.columns.tolist()
+    for col in on_cols:
+        prev_cols = [f'prev_{i}d_{col}' for i in range(1, n_days+1)]
+        
+        df_stats = pd.concat([df[prev_cols].mean(axis=1), df[prev_cols].std(axis=1), df[prev_cols].max(axis=1), df[prev_cols].min(axis=1)], axis=1)
+        stats_cols = [f'mean_{col}_{n_days}d', f'std_{col}_{n_days}d', f'max_{col}_{n_days}d', f'min_{col}_{n_days}d']
+        
+        df_stats.columns = stats_cols
+        
+        daily_features += stats_cols
+        stats_list.append(df_stats)
+        
+        df = df.drop(columns=prev_cols)
+    
+    df = pd.concat([df] + stats_list, axis=1)
+        
+    # daily_stats = df.groupby(group_key)[on_cols].rolling(n_days).agg(stats).droplevel(group_key)
+    # daily_stats.columns = daily_stats.columns.map(
+    #     lambda x: '_'.join([x[1], x[0], 'daily', str(n_days)])
+    #     ).to_series()
+    
+    # df = pd.concat([df, daily_stats], axis=1)
+    
+    # daily_features = daily_stats.columns.tolist()
     
     df.fillna(0, inplace=True)
     df.replace([np.inf, -np.inf], 0, inplace=True)
@@ -286,7 +332,7 @@ if __name__ == "__main__":
     print("Saving to csv...")
     
     df_daily.to_parquet(
-        "/home/lishi/projects/Competition/kaggle_2023/data/train_full_features.parquet", 
+        "/home/lishi/projects/Competition/kaggle_2023/data/train_add_daily_features.parquet", 
         index=False)
     
     print(f"Time elapsed: {(time()-now)/60:.2f} min.")
