@@ -137,7 +137,7 @@ def gen_v1v2_features(
         group_key = ['seconds_in_bucket']
         
     group_by_seconds = df.groupby(group_key)
-    v2_feat_cols = prices + sizes + v1_features
+    v2_feat_cols = prices + sizes #+ v1_features
     
     # cross-section statistics of row-wise features
     df_stats = group_by_seconds[v2_feat_cols].agg(v2_stats)
@@ -148,7 +148,7 @@ def gen_v1v2_features(
     df_rank = group_by_seconds[v2_feat_cols].rank(pct=True).add_prefix('rank_')
     df = pd.concat([df, df_rank], axis=1)
 
-    df = df.drop(columns=drop_cols)
+    # df = df.drop(columns=drop_cols)
     v2_features = df_stats.columns.tolist() + df_rank.columns.tolist()
     v2_features = [f for f in v2_features if f not in drop_cols]
     
@@ -186,6 +186,7 @@ def gen_v3_features(
         for i in range(1, roll_window+1):
             df[f"pct_{i}_{col}"] = df[col] / df[f"prev_{i}_{col}"] - 1
             v3_features.append(f"pct_{i}_{col}")
+            break # only calculate pct_change of one time lag
 
     stats_list = []
     for col in roll_features:
@@ -200,6 +201,7 @@ def gen_v3_features(
         df = df.drop(columns=prev_cols)
     
     df = pd.concat([df] + stats_list, axis=1)
+    df = df[[c for c in df.columns if not c.startswith('prev_')]]
     
     # df_change = group_by_stock[pct_features].pct_change(1, fill_method=None).add_prefix('pct_')
     
@@ -265,9 +267,14 @@ def gen_daily_stats_features(df, on_cols=['target', 'wap', 'volume'], n_days=5):
     for col in on_cols:
         prev_cols = [f'prev_{i}d_{col}' for i in range(1, n_days+1)]
         
-        df_stats = pd.concat([df[prev_cols].mean(axis=1), df[prev_cols].std(axis=1), df[prev_cols].max(axis=1), df[prev_cols].min(axis=1)], axis=1)
-        stats_cols = [f'mean_{col}_{n_days}d', f'std_{col}_{n_days}d', f'max_{col}_{n_days}d', f'min_{col}_{n_days}d']
+        df_stats = pd.concat(
+            [df[prev_cols].mean(axis=1), 
+             df[prev_cols].std(axis=1), 
+             df[prev_cols].max(axis=1), 
+             df[prev_cols].min(axis=1)
+            ], axis=1)
         
+        stats_cols = [f'mean_{col}_{n_days}d', f'std_{col}_{n_days}d', f'max_{col}_{n_days}d', f'min_{col}_{n_days}d']
         df_stats.columns = stats_cols
         
         daily_features += stats_cols
@@ -317,7 +324,7 @@ if __name__ == "__main__":
     
     df_v1v2, v1_features, v2_features = gen_v1v2_features(df, prices, sizes, stock_labels=stock_labels)
     
-    df_v3, v3_features = gen_v3_features(df_v1v2, add_ta=True)
+    df_v3, v3_features = gen_v3_features(df_v1v2, add_ta=False)
     
     df_daily, daily_features = gen_daily_stats_features(df_v3)
     
@@ -329,10 +336,16 @@ if __name__ == "__main__":
     print(f"Daily features: {len(daily_features)}")
     
     print(f"Time elapsed: {(time()-now)/60:.2f} min.")
-    print("Saving to csv...")
+    print("Saving to parquet...")
+    
+    save_dir = "/home/lishi/projects/Competition/kaggle_2023/data"
+    result_name = "add_daily_features"
+    
+    with open(f"{save_dir}/feature_cols_{result_name}.txt", "w") as f:
+        f.write("\n".join(df_daily.columns.tolist()))
     
     df_daily.to_parquet(
-        "/home/lishi/projects/Competition/kaggle_2023/data/train_add_daily_features.parquet", 
+        f"{save_dir}/train_{result_name}.parquet", 
         index=False)
     
     print(f"Time elapsed: {(time()-now)/60:.2f} min.")
